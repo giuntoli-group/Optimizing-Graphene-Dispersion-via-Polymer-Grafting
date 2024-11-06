@@ -1,0 +1,191 @@
+##########################################################
+################ Graphene grafting polymer ###############
+##########################################################
+# type 1: Graphene;  A
+# type 2: backbone;  B
+# type 3: sidechain; C
+
+variable     epsAA   equal 0.821
+variable     epsBB   equal 0.500
+variable     epsCC   equal 1.500
+variable     epsBC   equal 0.866
+
+variable     sigAA   equal 3.46
+variable     sigBB   equal 5.50
+variable     sigCC   equal 4.42
+variable     sigBC   equal 4.96
+
+variable     epsAB   equal sqrt(${epsAA}*${epsBB})
+variable     epsAC   equal sqrt(${epsAA}*${epsCC})
+
+variable     sigAB   equal (${sigAA}+${sigBB})/2
+variable     sigAC   equal (${sigAA}+${sigCC})/2
+
+variable     sigAAcut equal ${sigAA}*1.1225
+variable     sigBBcut equal ${sigBB}*1.1225
+variable     sigCCcut equal ${sigCC}*1.1225
+variable     sigABcut equal ${sigAB}*1.1225
+variable     sigACcut equal ${sigAC}*1.1225
+variable     sigBCcut equal ${sigBC}*1.1225
+
+variable     Random equal "10*round(random(10, 5600000, 250))"
+
+#######################################################
+units			real
+boundary		p p p
+atom_style		full
+timestep        4
+
+variable        TI equal 800    # Initial Temperature
+variable        T  equal 300    # TTARGET
+
+######################################################
+neighbor        2.5 bin
+bond_style      hybrid morse harmonic
+angle_style     hybrid table linear 361 harmonic class2
+dihedral_style  hybrid harmonic multi/harmonic
+special_bonds   lj 0 0 1
+
+read_data       Model.data
+
+group           graphene type 1
+
+bond_coeff      1 morse 196.38 1.55 2.8
+bond_coeff      2 harmonic 5 3
+bond_coeff      3 harmonic 105.0 2.735
+bond_coeff      4 harmonic 39.86 3.658
+
+angle_coeff     1 harmonic 409.40 120
+angle_coeff     2 harmonic 5 90
+angle_coeff     3 table AAA_avg_potential_iter9_eAB.table Angle   # A-A-A angle
+angle_coeff     4 class2 96.85 9.8812 -15.1188 6.5889             # A-A-B angle
+angle_coeff     4 class2 bb 0 0 0
+angle_coeff     4 class2 ba 0 0 0 0
+
+dihedral_coeff  1 harmonic 4.15 -1 2
+dihedral_coeff  2 multi/harmonic 4.38 0.8739 -0.3571 -0.2774 0.09312 # A-A-A-A dihedral
+dihedral_coeff  3 multi/harmonic 4.519 -0.8859 -1.692 0.5625 0.9562  # B-A-A-B dihedral
+
+##########################################################
+########## Soft potential to remove overlaps #############
+##########################################################
+pair_style		hybrid lj/gromacs 10 12 soft 1.0
+pair_coeff      * * soft 50.0 3.0
+pair_coeff      1 1 lj/gromacs ${epsAA} ${sigAA}
+pair_coeff      1 2 lj/gromacs ${epsAB} ${sigAB}
+pair_coeff      1 3 lj/gromacs ${epsAC} ${sigAC}
+
+##########################################################
+##################### Thermo output ######################
+##########################################################
+
+thermo          1000
+thermo_style    custom step etotal ke temp pe ebond eangle edihed evdwl elong press lx ly lz vol density
+
+velocity        all create 300 544215
+minimize        1.0e-8 1.0e-8 20000 20000
+
+reset_timestep  0
+dump            00 graphene custom 5000 graphene-wrap-0.dump id mol type x y z
+dump_modify     00 pbc yes
+dump            11 graphene custom 5000 graphene-unwrap-0.dump id mol type xu yu zu
+
+dump            22 all custom 50000 All.dump id mol type x y z
+
+fix             5 all nvt temp ${TI} ${TI} 400 drag 2
+run             100000
+unfix           5
+write_data      soft.data
+
+##########################################################
+########## Deform to the density of 0.3 g/cm^3 ###########
+timestep        4
+variable        density0 equal "density"
+variable        l0 equal "lx"
+variable        lf equal ((${density0}*${l0}*${l0}*${l0})/0.3)^(1/3)
+
+fix 		    11 all nve temp ${TI} ${TI} 400 drag 2
+fix             22 all deform 1 x final 0 ${lf} y final 0 ${lf} z final 0 ${lf}
+run             100000
+unfix           22
+run             100000
+unfix           11
+write_data      deformed.data
+
+######################################################
+################# Turn on LJ potential ###############
+######################################################
+pair_style		lj/cut 12
+pair_coeff      1 1 ${epsAA} ${sigAA}
+pair_coeff      2 2 ${epsBB} ${sigBB} ${sigBBcut}
+pair_coeff      3 3 ${epsCC} ${sigCC} ${sigCCcut}
+pair_coeff      1 2 ${epsAB} ${sigAB}
+pair_coeff      1 3 ${epsAC} ${sigAC}
+pair_coeff      2 3 ${epsBC} ${sigBC} ${sigBCcut}
+
+velocity        all create ${TI} 456725
+
+minimize        1.0e-8 1.0e-8 10000 10000
+
+fix             50 all nvt temp ${TI} ${TI} 400 drag 2
+run             20000000
+unfix           50
+
+undump          00
+undump          11
+write_data      check.data
+
+######################################################
+############### Turn on LJ potential #################
+pair_style      lj/gromacs 12 15
+pair_coeff      1 1 ${epsAA} ${sigAA}
+pair_coeff      2 2 ${epsBB} ${sigBB}
+pair_coeff      3 3 ${epsCC} ${sigCC}
+pair_coeff      1 2 ${epsAB} ${sigAB}
+pair_coeff      1 3 ${epsAC} ${sigAC}
+pair_coeff      2 3 ${epsBC} ${sigBC}
+
+######################################################
+################ energy minimization #################
+min_style       cg
+minimize 	    1.0e-10 1.0e-10 100000 100000
+write_data      min.data
+
+dump            00 graphene custom 1000 graphene-wrap-1.dump id mol type x y z
+dump_modify     00 pbc yes
+dump            11 graphene custom 1000 graphene-unwrap-1.dump id mol type xu yu zu
+
+fix             50 all npt temp ${TI} ${TI} 400 iso 1 1 4000 drag 2
+run             1000000
+unfix           50
+write_data      1.data
+
+fix             50 all npt temp ${TI} ${T} 400 iso 1 1 4000 drag 2
+run             1000000
+unfix           50
+
+fix             50 all npt temp ${T} ${T} 400 iso 1 1 4000 drag 2
+run             1000000
+unfix           50
+
+write_data      Equil.data
+write_restart   Equil.rest
+
+undump          00
+undump          11
+undump          22
+
+#####     msd for relaxation time calculation     #####
+reset_timestep  0
+dump            5 all dcd 100 wrap.dcd
+dump            55 all dcd 100 unwrap.dcd
+dump_modify     55 unwrap yes
+
+fix             50 all npt temp ${T} ${T} 400 iso 1 1 4000 drag 2
+run             100000
+unfix           50
+
+write_data      Final.data
+write_restart   Final.rest
+
+print "ALL DONE"
